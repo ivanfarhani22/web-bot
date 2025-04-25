@@ -13,6 +13,7 @@
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.17.16",
     "fs": "^0.0.1-security",
+    "node-cron": "^3.0.3",
     "pino": "^8.21.0",
     "qrcode-terminal": "^0.12.0"
   }

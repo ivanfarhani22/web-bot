@@ -1,32 +1,42 @@
-const { default: makeWAConnection, DisconnectReason } = require('@whiskeysockets/baileys');
-const { useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
+const cron = require('node-cron');
 
-// Clear auth info to start fresh
-if (fs.existsSync('./auth_info_baileys')) {
-  fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
+// Target phone number (with proper format for WhatsApp)
+const targetNumber = '6281615252042@s.whatsapp.net'; // Format: country code + number without symbols + @s.whatsapp.net
+
+// Message to send automatically
+const autoMessage = 'Angga kirik';
+
+// Create auth directory if it doesn't exist
+if (!fs.existsSync('./auth_info_baileys')) {
+  fs.mkdirSync('./auth_info_baileys', { recursive: true });
 }
 
 async function connectWA() {
   console.log('Starting WhatsApp connection...');
   
+  // Get authentication state
   const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
   
-  const sock = makeWAConnection({
+  // Create WhatsApp socket connection
+  const sock = makeWASocket({
     auth: state,
     printQRInTerminal: true,
-    logger: pino({ level: 'info' }),
-    qrTimeout: 60000, // Increase QR timeout to 60 seconds
-    connectTimeoutMs: 60000, // Increase general connection timeout
-    keepAliveIntervalMs: 10000, // Keep connection alive
-    browser: ['Chrome', 'Desktop', '103.0.5060.114'] // Use stable browser fingerprint
+    logger: pino({ level: 'warn' }), // Change to 'info' for more logs or 'silent' for no logs
+    browser: ['Chrome (Linux)', '', ''], // More generic browser signature
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 10000,
   });
 
+  // Handle credential updates
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
+  // Handle connection updates
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     
     if (qr) {
@@ -34,52 +44,70 @@ async function connectWA() {
     }
     
     if (connection === 'close') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = lastDisconnect?.error instanceof Boom && 
+                             lastDisconnect.error.output?.statusCode !== DisconnectReason.loggedOut;
       
-      console.log(`Connection closed with status: ${statusCode}`);
+      console.log(`Connection closed due to ${lastDisconnect.error?.output?.payload?.message || 'unknown reason'}`);
+      console.log(`Status code: ${lastDisconnect.error?.output?.statusCode}`);
       
-      if (statusCode === DisconnectReason.loggedOut || statusCode === 408) {
-        console.log('Session ended or timed out, reconnecting...');
-        setTimeout(connectWA, 3000); // Wait 3 seconds before reconnecting
-      } else if (lastDisconnect.error instanceof Boom) {
+      if (shouldReconnect) {
+        console.log('Reconnecting...');
+        setTimeout(connectWA, 5000); // Longer delay before reconnecting
+      } else if (lastDisconnect.error?.output?.statusCode === DisconnectReason.loggedOut) {
+        console.log('You have been logged out. Clearing auth state and reconnecting...');
+        // Clear auth info and try again
+        if (fs.existsSync('./auth_info_baileys')) {
+          fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
+          fs.mkdirSync('./auth_info_baileys', { recursive: true });
+        }
+        setTimeout(connectWA, 5000);
+      } else {
         console.log('Reconnecting due to connection error...');
-        setTimeout(connectWA, 3000);
+        setTimeout(connectWA, 5000);
       }
     } else if (connection === 'open') {
-      console.log('Connection opened successfully');
+      console.log('Connection opened successfully!');
+      
+      // Test connection with a simple presence update
+      try {
+        await sock.sendPresenceUpdate('available', targetNumber);
+        console.log('Presence update sent successfully');
+        
+        // Setup scheduler for automatic messages
+        setupScheduler(sock);
+      } catch (err) {
+        console.error('Error in connection test:', err);
+      }
     }
   });
-
-  sock.ev.on('messages.upsert', async (m) => {
-    try {
-      const msg = m.messages[0];
-      // Hanya proses jika ini pesan masuk baru (bukan pemberitahuan status dll)
-      if (!msg.message || msg.key.fromMe) return;
-      
-      // Extract the message content
-      const msgType = Object.keys(msg.message)[0];
-      let text = '';
-      
-      if (msgType === 'conversation') {
-        text = msg.message.conversation;
-      } else if (msgType === 'extendedTextMessage') {
-        text = msg.message.extendedTextMessage.text;
-      }
-      
-      const sender = msg.key.remoteJid;
-      console.log(`Received message: "${text}" from ${sender}`);
-
-      // Respons untuk semua pesan masuk
-      if (text && text.trim() !== '') {
-        console.log('Sending reply...');
-        await sock.sendMessage(sender, { text: 'Halo juga!' });
-        console.log('Reply sent');
-      }
-    } catch (err) {
-      console.error('Error handling message:', err);
-    }
-  });
+  
+  // Removed message handler/auto-reply function completely
+  
+  return sock;
 }
 
+function setupScheduler(sock) {
+  console.log('Setting up automatic message scheduler...');
+  
+  // Schedule task to run at 3:00 PM (15:00) every day
+  cron.schedule('0 15 * * *', async () => {
+    try {
+      console.log(`Sending scheduled message to ${targetNumber}...`);
+      await sock.sendMessage(targetNumber, { text: autoMessage });
+      console.log('Scheduled message sent successfully');
+    } catch (error) {
+      console.error('Failed to send scheduled message:', error);
+    }
+  }, {
+    timezone: "Asia/Jakarta"
+  });
+  
+  console.log('Scheduler set up successfully. Message will be sent at 3:00 PM (15:00) Jakarta time.');
+}
+
+// Start the bot
 console.log('WhatsApp Bot starting...');
-connectWA();
+connectWA().catch(err => {
+  console.error('Fatal error starting bot:', err);
+  process.exit(1);
+});
