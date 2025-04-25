@@ -90,7 +90,7 @@ function setupScheduler(sock) {
   console.log('Setting up automatic message scheduler...');
   
   // Schedule task to run at 3:00 PM (15:00) every day
-  cron.schedule('0 16 * * *', async () => {
+  cron.schedule('15 16 * * *', async () => {
     try {
       console.log(`Sending scheduled message to ${targetNumber}...`);
       await sock.sendMessage(targetNumber, { text: autoMessage });
