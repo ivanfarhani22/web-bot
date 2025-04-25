@@ -3,11 +3,14 @@ const pino = require('pino');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
 const cron = require('node-cron');
+const express = require('express');
 
-// Target phone number (with proper format for WhatsApp)
+// Express app setup
+const app = express();
+const port = process.env.PORT || 3000;
+
+// WhatsApp Bot Configuration
 const targetNumber = '6281615252042@s.whatsapp.net'; // Format: country code + number without symbols + @s.whatsapp.net
-
-// Message to send automatically
 const autoMessage = 'Angga kirik';
 
 // Create auth directory if it doesn't exist
@@ -81,16 +84,14 @@ async function connectWA() {
     }
   });
   
-  // Removed message handler/auto-reply function completely
-  
   return sock;
 }
 
 function setupScheduler(sock) {
   console.log('Setting up automatic message scheduler...');
   
-  // Schedule task to run at 3:00 PM (15:00) every day
-  cron.schedule('30 16 * * *', async () => {
+  // Schedule task to run at 4:30 PM (16:30) every day
+  cron.schedule('40 16 * * *', async () => {
     try {
       console.log(`Sending scheduled message to ${targetNumber}...`);
       await sock.sendMessage(targetNumber, { text: autoMessage });
@@ -102,12 +103,30 @@ function setupScheduler(sock) {
     timezone: "Asia/Jakarta"
   });
   
-  console.log('Scheduler set up successfully. Message will be sent at 3:00 PM (15:00) Jakarta time.');
+  console.log('Scheduler set up successfully. Message will be sent at 4:30 PM (16:30) Jakarta time.');
 }
 
-// Start the bot
-console.log('WhatsApp Bot starting...');
-connectWA().catch(err => {
-  console.error('Fatal error starting bot:', err);
-  process.exit(1);
+// Express Routes
+app.get('/', (req, res) => {
+  res.send('Bot is running');
+});
+
+// Add a health check endpoint (useful for monitoring)
+app.get('/status', (req, res) => {
+  res.json({
+    status: 'online',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Start Express Server
+app.listen(port, () => {
+  console.log(`Express server listening on port ${port}`);
+  
+  // Start the WhatsApp bot
+  console.log('WhatsApp Bot starting...');
+  connectWA().catch(err => {
+    console.error('Fatal error starting bot:', err);
+    process.exit(1);
+  });
 });
